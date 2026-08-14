@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hybridvoice"
+version = "0.1.0"
+description = "HybridVoice: TTS (OmniVoice) + Voice Conversion (SeedVC) в едином API"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+authors = [{ name = "HybridVoice Team" }]
+keywords = [
+    "tts",
+    "text-to-speech",
+    "voice-cloning",
+    "voice-conversion",
+    "speech-synthesis",
+]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Programming Language :: Python :: 3",
+]
+
+dependencies = [
+    "torch>=2.4",
+    "torchaudio>=2.4",
+    "transformers>=5.3.0",
+    "accelerate",
+    "huggingface-hub>=0.28.1",
+    "numpy",
+    "librosa",
+    "soundfile",
+    "pyyaml",
+    "einops",
+    "munch",
+]
+
+[project.urls]
+Homepage = "https://github.com/hybridvoice/HybridVoice"
+Repository = "https://github.com/hybridvoice/HybridVoice"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hybridvoice"]
