@@ -1,7 +1,7 @@
 """
 Модуль Voice Conversion на базе SeedVC F0 Base.
 
-Соответствует production-пайплайну Dublaj (seedvc_v2_speaker_diarization_v2):
+Использует следующую конфигурацию моделей:
     - Модель: Seed-VC V1 F0 Base (seed-uvit-whisper-base, 200M параметров)
     - Sample rate: 44100 Hz
     - F0 conditioning: ВСЕГДА ВКЛЮЧЕН
@@ -12,9 +12,6 @@
 Параметры по умолчанию:
     diffusion_steps=100, length_adjust=1.0, inference_cfg_rate=0.8,
     auto_f0_adjust=True, f0_condition=True, pitch_shift=0
-
-ВАЖНО: SeedVC не является pip-пакетом, поэтому этот модуль
-ищет репозиторий seed-vc на диске и импортирует его напрямую.
 """
 
 import logging
@@ -30,34 +27,6 @@ from .config import HybridVoiceConfig
 from .utils import get_best_device
 
 logger = logging.getLogger(__name__)
-
-
-def _find_seed_vc_repo() -> Optional[Path]:
-    """
-    Ищет папку репозитория seed-vc на диске.
-
-    Порядок поиска:
-        1. Переменная окружения SEED_VC_PATH.
-        2. Папка ../seed-vc относительно текущего файла.
-        3. Папка ./seed-vc относительно рабочей директории.
-
-    Returns:
-        Path к репозиторию seed-vc, или None если не найден.
-    """
-    env_path = os.environ.get("SEED_VC_PATH")
-    if env_path and Path(env_path).exists():
-        return Path(env_path)
-
-    parent = Path(__file__).parent.parent
-    candidate = parent / "seed-vc"
-    if candidate.exists():
-        return candidate
-
-    candidate = Path.cwd() / "seed-vc"
-    if candidate.exists():
-        return candidate
-
-    return None
 
 
 class SeedVC:
@@ -85,36 +54,14 @@ class SeedVC:
 
         Args:
             config: Конфигурация HybridVoice.
-
-        Raises:
-            FileNotFoundError: Если репозиторий seed-vc не найден.
         """
         self.config = config
         self.device = config.device or get_best_device()
         self.is_loaded = False
 
-        # Находим репозиторий seed-vc
-        self.repo_path = _find_seed_vc_repo()
-        if self.repo_path is None:
-            raise FileNotFoundError(
-                "Репозиторий seed-vc не найден!\n"
-                "Варианты решения:\n"
-                "  1. Клонируйте: git clone https://github.com/Plachtaa/Seed-VC\n"
-                "  2. Укажите путь: export SEED_VC_PATH=/path/to/seed-vc"
-            )
-
-        repo_str = str(self.repo_path)
-        if repo_str not in sys.path:
-            sys.path.insert(0, repo_str)
-
-        logger.info(f"SeedVC репозиторий найден: {self.repo_path}")
-
-        # Папка для кэша весов SeedVC (абсолютный путь!)
-        # Сюда скачаются: DiT чекпоинт, конфиг, RMVPE, CAMPPlus
-        self.checkpoint_dir = Path(
-            self.config.cache_dir
-            or (Path(__file__).parent.parent / "checkpoints")
-        ).resolve()
+        # Кэш весов: СТАНДАРТНЫЙ HF-кэш (как у transformers/diffusers).
+        # config.cache_dir позволяет переопределить папку при желании.
+        self.custom_cache_dir = config.cache_dir  # None = стандартный HF-кэш
 
         # Атрибуты моделей (заполняются в load())
         self.model = None
@@ -126,6 +73,23 @@ class SeedVC:
         self.sr = config.vc_sample_rate  # 44100 для F0-модели
         self.hop_length = 512
 
+    @property
+    def checkpoint_dir(self) -> Path:
+        """
+        Фактическая папка кэша весов.
+
+        Возвращает:
+            Путь к папке кэша: config.cache_dir, если задан,
+            иначе стандартный HF-кэш (например,
+            ~/.cache/huggingface/hub на Linux или
+            C:\\Users\\<user>\\.cache\\huggingface\\hub на Windows).
+        """
+        if self.custom_cache_dir:
+            return Path(self.custom_cache_dir)
+        from huggingface_hub.constants import HF_HUB_CACHE
+
+        return Path(HF_HUB_CACHE)
+
     def _load_from_hf(
         self,
         repo_id: str,
@@ -133,11 +97,11 @@ class SeedVC:
         config_filename: Optional[str] = None,
     ):
         """
-        Скачивает файл(ы) модели с HuggingFace в self.checkpoint_dir.
+        Скачивает файл(ы) модели с HuggingFace в стандартный HF-кэш.
 
         Это наша замена hf_utils.load_custom_model_from_hf из seed-vc,
-        которая использует АБСОЛЮТНЫЙ путь к кэшу (а не относительный
-        "./checkpoints", зависящий от рабочей директории).
+        которая зависела от рабочей директории ("./checkpoints").
+        Все веса SeedVC лежат в одном кэше с OmniVoice/Whisper/BigVGAN.
 
         При повторном запуске файлы берутся из кэша, повторного
         скачивания не происходит.
@@ -155,12 +119,13 @@ class SeedVC:
         """
         from huggingface_hub import hf_hub_download
 
-        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        # cache_dir=None → hf_hub_download использует стандартный HF-кэш
+        cache_dir = self.custom_cache_dir  # None если не задан в config
 
         model_path = hf_hub_download(
             repo_id=repo_id,
             filename=model_filename,
-            cache_dir=str(self.checkpoint_dir),
+            cache_dir=cache_dir,
         )
         if config_filename is None:
             return model_path
@@ -168,7 +133,7 @@ class SeedVC:
         config_path = hf_hub_download(
             repo_id=repo_id,
             filename=config_filename,
-            cache_dir=str(self.checkpoint_dir),
+            cache_dir=cache_dir,
         )
         return model_path, config_path
 
@@ -198,7 +163,7 @@ class SeedVC:
         logger.info("Загрузка SeedVC F0 Base...")
         logger.info(f"Кэш весов SeedVC: {self.checkpoint_dir}")
 
-        from modules.commons import build_model, load_checkpoint, recursive_munch
+        from seed_vc.modules.commons import build_model, load_checkpoint, recursive_munch
 
         # ============================================================
         # 1. DiT F0 модель (44100 Hz)
@@ -231,7 +196,7 @@ class SeedVC:
         self.model.cfm.estimator.setup_caches(max_batch_size=1, max_seq_length=8192)
 
         # --- Mel-спектrogramма ---
-        from modules.audio import mel_spectrogram
+        from seed_vc.modules.audio import mel_spectrogram
 
         mel_fn_args = {
             "n_fft": config["preprocess_params"]["spect_params"]["n_fft"],
@@ -305,7 +270,7 @@ class SeedVC:
         # 3. RMVPE (экстрактор F0)
         # ============================================================
         logger.info("Загрузка RMVPE (F0 extractor)...")
-        from modules.rmvpe import RMVPE
+        from seed_vc.modules.rmvpe import RMVPE
 
         rmvpe_path = self._load_from_hf(
             "lj1995/VoiceConversionWebUI", "rmvpe.pt", None
@@ -317,7 +282,7 @@ class SeedVC:
         # 4. CAMPPlus (эмбеддинг говорящего)
         # ============================================================
         logger.info("Загрузка CAMPPlus...")
-        from modules.campplus.DTDNN import CAMPPlus
+        from seed_vc.modules.campplus.DTDNN import CAMPPlus
 
         campplus_ckpt_path = self._load_from_hf(
             "funasr/campplus", "campplus_cn_common.bin", config_filename=None
@@ -333,7 +298,7 @@ class SeedVC:
         # 5. BigVGAN 44k (вокодер)
         # ============================================================
         logger.info("Загрузка BigVGAN 44k...")
-        from modules.bigvgan import bigvgan
+        from seed_vc.modules.bigvgan import bigvgan
 
         vocoder_type = model_params.vocoder.type
         if vocoder_type == "bigvgan":

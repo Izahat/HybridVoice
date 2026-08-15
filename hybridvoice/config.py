@@ -1,7 +1,7 @@
 """
 Конфигурация библиотеки HybridVoice.
 
-Параметры соответствуют production-пайплайну Dublaj:
+Параметры по умолчанию:
     - SeedVC V1 F0 Base (44100 Hz, RMVPE, BigVGAN 44k)
     - OmniVoice в режиме Voice Design (instruct)
 """
@@ -35,9 +35,9 @@ class HybridVoiceConfig:
 
         --- Параметры Voice Conversion (SeedVC F0) ---
         diffusion_steps: Шаги диффузии для SeedVC (100 = макс качество).
-        inference_cfg_rate: Сходство с референсом (0.8 в Dublaj).
+        inference_cfg_rate: Сходство с референсом (по умолчанию 0.8).
         length_adjust: Коэффициент длины/скорости (1.0 = норма).
-        f0_condition: Использовать F0-модель (всегда True в Dublaj).
+        f0_condition: Использовать F0-модель (всегда True).
         auto_f0_adjust: Автоподстройка высоты голоса (всегда True).
         pitch_shift: Сдвиг тона в полутонах (0 = без сдвига).
 

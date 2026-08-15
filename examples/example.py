@@ -29,7 +29,7 @@ from hybridvoice import HybridVoice, HybridVoiceConfig, supported_languages
 def main():
     """Главная функция примера."""
     # ------------------------------------------------------------------
-    # 1. Конфигурация (параметры как в Dublaj)
+    # 1. Конфигурация (параметры по умолчанию)
     # ------------------------------------------------------------------
     config = HybridVoiceConfig(
         device=None,              # автоопределение (cuda/mps/cpu)

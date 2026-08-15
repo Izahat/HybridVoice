@@ -2,7 +2,7 @@
 Главный класс HybridVoice.
 
 Объединяет TTS (OmniVoice) и Voice Conversion (SeedVC F0)
-в единый простой интерфейс — как в production-пайплайне Dublaj.
+в единый простой интерфейс.
 
 Логика пайплайна:
     1. OmniVoice генерирует речь из текста в режиме Voice Design
@@ -29,7 +29,7 @@ class HybridVoice:
     """
     Главная модель HybridVoice: TTS + Voice Conversion в одном API.
 
-    Пайплайн (как в Dublaj):
+    Пайплайн:
         Текст → OmniVoice [Voice Design, default голос] → SeedVC [наложение голоса] → результат
 
     ВАЖНАЯ ЛОГИКА:
@@ -133,7 +133,7 @@ class HybridVoice:
         """
         Генерирует речь из текста с клонированием голоса.
 
-        ЛОГИКА ПАЙПЛАЙНА (как в Dublaj):
+        ЛОГИКА ПАЙПЛАЙНА:
             Даже если пользователь делает TTS с клонированием, OmniVoice
             ВСЕГДА генерирует речь с голосом ПО УМОЛЧАНИЮ (Voice Design,
             обычный male/female на нужном языке) — БЕЗ референс-аудио.

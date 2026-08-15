@@ -2,7 +2,8 @@
 Тест кэширования моделей.
 
 Проверяет:
-    1. Файлы моделей скачиваются в нужные папки кэша.
+    1. ВСЕ веса скачиваются в стандартный HF-кэш
+       (как у transformers/diffusers — так делают senior-разработчики).
     2. При повторной загрузке используется кэш (без повторного скачивания).
 
 Запуск:
@@ -18,7 +19,7 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 from hybridvoice.config import HybridVoiceConfig
-from hybridvoice.vc import SeedVC, _find_seed_vc_repo
+from hybridvoice.vc import SeedVC
 
 
 def _dir_size_mb(path: Path) -> float:
@@ -37,116 +38,102 @@ def _dir_size_mb(path: Path) -> float:
     return total / (1024 * 1024)
 
 
-def _list_files(path: Path) -> list:
+def test_seedvc_cache_in_hf():
     """
-    Возвращает список файлов в папке (рекурсивно).
+    Проверяет, что SeedVC качает веса в СТАНДАРТНЫЙ HF-кэш.
 
-    Args:
-        path: Путь к папке.
-
-    Returns:
-        Список относительных путей к файлам.
-    """
-    if not path.exists():
-        return []
-    return sorted(
-        str(f.relative_to(path)) for f in path.rglob("*") if f.is_file()
-    )
-
-
-def test_seedvc_cache():
-    """
-    Проверяет, что SeedVC скачивает веса в checkpoints/ и использует кэш.
-
-    Скачивает маленький файл CAMPPlus (~7 МБ) дважды:
-        - 1-й раз: скачивание с HuggingFace
-        - 2-й раз: загрузка из кэша (проверяем через HF_HUB_OFFLINE)
+    Проверяем на маленьком файле CAMPPlus (~27 МБ):
+        - 1-й раз: скачивание (если ещё нет в кэше)
+        - 2-й раз: загрузка из кэша (HF_HUB_OFFLINE=1)
     """
     print("=" * 60)
-    print("ТЕСТ 1: Кэширование SeedVC")
-    print("=" * 60)
-
-    config = HybridVoiceConfig()
-    vc = SeedVC(config)
-
-    print(f"Папка кэша SeedVC: {vc.checkpoint_dir}")
-    assert vc.checkpoint_dir.is_absolute(), "Путь к кэшу должен быть абсолютным!"
-
-    # --- Скачиваем маленький CAMPPlus для проверки механизма ---
-    print("\n[1/3] Первое скачивание CAMPPlus (~7 МБ)...")
-    files_before = _list_files(vc.checkpoint_dir)
-    path1 = vc._load_from_hf("funasr/campplus", "campplus_cn_common.bin")
-    files_after = _list_files(vc.checkpoint_dir)
-
-    new_files = set(files_after) - set(files_before)
-    print(f"  Скачано в кэш: {new_files}")
-    print(f"  Путь к файлу: {path1}")
-    assert Path(path1).exists(), "Файл CAMPPlus не найден после скачивания!"
-    assert len(new_files) > 0, "В кэше не появилось новых файлов!"
-
-    size_mb = Path(path1).stat().st_size / (1024 * 1024)
-    print(f"  Размер: {size_mb:.1f} МБ")
-
-    # --- Проверяем, что повторная загрузка идёт из кэша ---
-    print("\n[2/3] Повторная загрузка в OFFLINE-режиме (только кэш)...")
-    os.environ["HF_HUB_OFFLINE"] = "1"
-    try:
-        path2 = vc._load_from_hf("funasr/campplus", "campplus_cn_common.bin")
-        assert path1 == path2, "Пути при повторной загрузке должны совпадать!"
-        print(f"  ✅ Загружено из кэша (без интернета): {path2}")
-    finally:
-        os.environ["HF_HUB_OFFLINE"] = "0"
-
-    # --- Итог по папке кэша ---
-    print(f"\n[3/3] Содержимое кэша SeedVC:")
-    print(f"  Папка: {vc.checkpoint_dir}")
-    print(f"  Размер: {_dir_size_mb(vc.checkpoint_dir):.1f} МБ")
-    for f in _list_files(vc.checkpoint_dir)[:10]:
-        print(f"    - {f}")
-
-    print("\n✅ ТЕСТ 1 ПРОЙДЕН: SeedVC кэширует веса и использует кэш.\n")
-
-
-def test_omnivoice_cache_location():
-    """
-    Показывает, куда OmniVoice скачивает веса (стандартный HF-кэш).
-
-    Сам OmniVoice НЕ скачивает здесь (это ~3-5 ГБ) — только показывает
-    расположение кэша. Реальное скачивание происходит в test_pipeline.py.
-    """
-    print("=" * 60)
-    print("ТЕСТ 2: Расположение кэша OmniVoice")
+    print("ТЕСТ 1: Кэширование SeedVC в стандартный HF-кэш")
     print("=" * 60)
 
     from huggingface_hub.constants import HF_HUB_CACHE
 
-    print(f"  Стандартный HF-кэш: {HF_HUB_CACHE}")
-    print(f"  OmniVoice будет скачан в:")
-    print(f"    {HF_HUB_CACHE}/models--k2-fsa--OmniVoice/")
-    print(f"  Audio-tokenizer в:")
-    print(f"    {HF_HUB_CACHE}/models--eustlb--higgs-audio-v2-tokenizer/")
-    print("\n✅ ТЕСТ 2 ПРОЙДЕН: расположение кэша OmniVoice определено.\n")
+    config = HybridVoiceConfig()
+    vc = SeedVC(config)
+
+    print(f"Фактический кэш SeedVC: {vc.checkpoint_dir}")
+    print(f"Стандартный HF-кэш:     {Path(HF_HUB_CACHE)}")
+    assert vc.checkpoint_dir == Path(HF_HUB_CACHE), (
+        "SeedVC должен качать в стандартный HF-кэш!"
+    )
+
+    print("\n[1/2] Первая загрузка CAMPPlus...")
+    path1 = vc._load_from_hf("funasr/campplus", "campplus_cn_common.bin")
+    print(f"  Файл: {path1}")
+    assert Path(path1).exists(), "Файл CAMPPlus не найден!"
+    assert str(Path(path1)).startswith(str(Path(HF_HUB_CACHE))), (
+        "Файл должен быть внутри HF-кэша!"
+    )
+
+    print("\n[2/2] Повторная загрузка в OFFLINE-режиме (только кэш)...")
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    try:
+        path2 = vc._load_from_hf("funasr/campplus", "campplus_cn_common.bin")
+        assert path1 == path2, "Пути при повторной загрузке должны совпадать!"
+        print(f"  ✅ Загружено из кэша (без интернета)")
+    finally:
+        os.environ["HF_HUB_OFFLINE"] = "0"
+
+    print("\n✅ ТЕСТ 1 ПРОЙДЕН: SeedVC использует стандартный HF-кэш.\n")
 
 
-def test_seedvc_repo_found():
+def test_custom_cache_dir():
     """
-    Проверяет, что репозиторий seed-vc найден на диске.
+    Проверяет, что config.cache_dir переопределяет папку кэша.
     """
     print("=" * 60)
-    print("ТЕСТ 3: Репозиторий seed-vc")
+    print("ТЕСТ 2: Переопределение кэша через config.cache_dir")
     print("=" * 60)
 
-    repo = _find_seed_vc_repo()
-    print(f"  Репозиторий: {repo}")
-    assert repo is not None, "Репозиторий seed-vc не найден!"
-    assert (repo / "modules").exists(), "Папка modules/ не найдена в seed-vc!"
-    print(f"  ✅ Репозиторий и modules/ найдены.\n")
+    custom = ROOT / "test_custom_cache"
+    config = HybridVoiceConfig(cache_dir=str(custom))
+    vc = SeedVC(config)
+
+    print(f"  config.cache_dir = {custom}")
+    print(f"  фактический кэш  = {vc.checkpoint_dir}")
+    assert vc.checkpoint_dir == custom, "cache_dir должен переопределять кэш!"
+    print("  ✅ Переопределение работает.\n")
+
+
+def test_hf_cache_summary():
+    """
+    Показывает сводку по всем весам в HF-кэше.
+    """
+    print("=" * 60)
+    print("ТЕСТ 3: Сводка по кэшу весов HybridVoice")
+    print("=" * 60)
+
+    from huggingface_hub.constants import HF_HUB_CACHE
+
+    models = {
+        "OmniVoice (TTS)": "models--k2-fsa--OmniVoice",
+        "Whisper (семантика)": "models--openai--whisper-small",
+        "BigVGAN (вокодер)": "models--nvidia--bigvgan_v2_44khz_128band_512x",
+        "SeedVC DiT (клонир.)": "models--Plachta--Seed-VC",
+        "RMVPE (F0)": "models--lj1995--VoiceConversionWebUI",
+        "CAMPPlus (тембр)": "models--funasr--campplus",
+    }
+
+    hub = Path(HF_HUB_CACHE)
+    total = 0.0
+    for label, folder in models.items():
+        size = _dir_size_mb(hub / folder)
+        status = "✅ в кэше" if size > 0 else "⬜ не скачан"
+        print(f"  {label:24} {size:8.1f} МБ  {status}")
+        total += size
+
+    print(f"\n  {'ИТОГО':24} {total:8.1f} МБ ({total/1024:.1f} ГБ)")
+    print(f"  Расположение: {hub}\n")
 
 
 if __name__ == "__main__":
-    test_seedvc_repo_found()
-    test_omnivoice_cache_location()
-    test_seedvc_cache()
+    test_seedvc_cache_in_hf()
+    test_custom_cache_dir()
+    test_hf_cache_summary()
     print("=" * 60)
     print("🎉 ВСЕ ТЕСТЫ КЭШИРОВАНИЯ ПРОЙДЕНЫ!")
     print("=" * 60)

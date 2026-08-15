@@ -439,3 +439,24 @@ class OmniVoiceTTS:
         if not self._is_loaded:
             self.load()
         return self.model.supported_language_names()
+
+    @staticmethod
+    def list_languages(query: str = None) -> None:
+        """
+        Печатает список всех 646 языков OmniVoice с кодами и названиями.
+
+        Без аргументов — все языки. С аргументом — фильтр по коду
+        или названию.
+
+        Args:
+            query: Фильтр (строка). Ищет совпадение в коде или названии.
+                Если None — выводит все языки.
+
+        Example:
+            >>> tts.list_languages()           # все 646 языков
+            >>> tts.list_languages("arabic")   # все арабские
+            >>> tts.list_languages("kazakh")   # казахский
+        """
+        from .voices import list_languages
+
+        list_languages(query)

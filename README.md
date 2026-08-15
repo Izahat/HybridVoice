@@ -1,7 +1,6 @@
 # HybridVoice 🎙️
 
 Библиотека для генерации речи с клонированием голоса.
-Пайплайн как в production-системе **Dublaj**:
 
 - **OmniVoice** — TTS в режиме Voice Design (генерирует речь из текста)
 - **SeedVC F0** — Voice Conversion (клонирует голос из reference_audio)
@@ -30,19 +29,32 @@ generate()
 
 ## Установка
 
+### Для пользователей (pip):
+```bash
+# PyTorch с CUDA (для GPU):
+pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+
+# Библиотека (omnivoice, seed-vc и всё остальное — автоматически):
+pip install hybridvoice
+```
+
+### Для разработчиков (из исходников):
 ```bash
 git clone https://github.com/hybridvoice/HybridVoice.git
 cd HybridVoice
 
 python -m venv venv
-source venv/bin/activate   # Windows: venv\Scripts\activate
+venv\Scripts\activate          # Windows
+# source venv/bin/activate    # Linux/Mac
 
+pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
 pip install -r requirements.txt
 pip install -e .
 ```
 
-> ⚠️ Для GPU-ускорения установите PyTorch с CUDA:
-> `pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128`
+> ⚠️ **Для GPU** — первая команда ставит PyTorch с CUDA 12.4 (RTX 30xx/40xx).
+> **Для CPU** (медленно) — пропусти первую команду.
+> **Веса моделей** (~5.5 ГБ) скачаются автоматически при первом `.generate()`.
 
 ## Быстрый старт
 
@@ -60,7 +72,7 @@ result = model.generate(
 result.save("output.wav")
 ```
 
-## Параметры Dublaj (по умолчанию)
+## Параметры по умолчанию
 
 ### SeedVC V1 F0 Base (44100 Hz)
 
@@ -175,7 +187,33 @@ audio = model.vc.convert(source=tts_audio, target="voice.wav", source_sr=24000)
 
 ## Маппинг язык → голос
 
-Как в Dublaj: для каждого языка по умолчанию мужской голос,
+OmniVoice поддерживает **646 языков**. Чтобы узнать все доступные коды:
+
+```python
+from hybridvoice import all_languages, list_languages
+
+langs = all_languages()   # словарь {код: название}
+print(len(langs))         # 646
+print(langs["ru"])        # russian
+print(langs["sw"])        # swahili
+
+# Показать все языки с фильтром:
+list_languages()           # все 646 языков
+list_languages("arabic")   # все арабские (21 язык)
+list_languages("kazakh")   # казахский
+```
+
+Используй любой код языка:
+
+```python
+model.generate("Hello!", language="sw")   # суахили
+model.generate("Привет!", language="tt")  # татарский
+model.generate("Bonjour!", language="wo") # волоф
+```
+
+Для популярных языков есть готовый маппинг настроек голоса (male/female):
+
+Для каждого языка по умолчанию мужской голос,
 суффикс `_female` даёт женский.
 
 ```python
@@ -209,7 +247,7 @@ HybridVoice/
 ├── hybridvoice/
 │   ├── __init__.py     # публичный API
 │   ├── model.py        # главный класс HybridVoice
-│   ├── config.py       # конфигурация (параметры Dublaj)
+│   ├── config.py       # конфигурация (параметры по умолчанию)
 │   ├── audio.py        # AudioResult (.save, .duration)
 │   ├── tts.py          # обёртка OmniVoice (design/clone/generate — полный API)
 │   ├── vc.py           # обёртка SeedVC F0 (RMVPE, BigVGAN 44k)
@@ -217,7 +255,7 @@ HybridVoice/
 │   └── utils.py        # утилиты (device, аудио)
 ├── examples/
 │   └── example.py      # пример использования
-├── checkpoints/        # кэш весов моделей
+├── tests/              # тесты (кэш, пайплайн)
 ├── requirements.txt
 ├── pyproject.toml
 └── README.md
@@ -226,9 +264,34 @@ HybridVoice/
 ## Требования
 
 - Python >= 3.10
-- PyTorch >= 2.4
-- Репозиторий [seed-vc](https://github.com/Plachtaa/Seed-VC) рядом с проектом
-  (или задайте путь через переменную окружения `SEED_VC_PATH`)
+- PyTorch >= 2.4 (с CUDA для GPU)
+- Все зависимости ставятся через `pip install` (omnivoice, seed-vc и др.)
+- Веса моделей скачаются автоматически при первом запуске (~5.5 ГБ)
+
+## 📦 Кэширование весов
+
+Все веса скачиваются автоматически при первом запуске в **стандартный
+HF-кэш** (как у transformers/diffusers):
+
+```
+Linux/Mac:   ~/.cache/huggingface/hub/
+Windows:     C:\Users\<user>\.cache\huggingface\hub\
+```
+
+| Модель | Размер |
+|--------|--------|
+| OmniVoice (TTS) | ~3.1 ГБ |
+| Whisper-small (семантика) | ~0.9 ГБ |
+| BigVGAN 44k (вокодер) | ~0.5 ГБ |
+| SeedVC DiT F0 (клонирование) | ~0.8 ГБ |
+| RMVPE (F0 extractor) | ~0.2 ГБ |
+| CAMPPlus (тембр) | ~27 МБ |
+
+**Итого ~5.5 ГБ**, скачивается один раз. При повторных запусках всё
+берётся из кэша (проверено offline-тестом).
+
+Переопределить папку кэша можно через `HybridVoiceConfig(cache_dir=...)`
+или переменную окружения `HF_HOME`.
 
 ## Лицензия
 

@@ -1,8 +1,8 @@
 """
 Маппинг языков на голоса (Voice Design).
 
-Соответствует логике Dublaj-клиента: для каждого языка по умолчанию
-используется мужской голос. Ключ с суффиксом "_female" даёт женский голос.
+Для каждого языка по умолчанию используется мужской голос.
+Ключ с суффиксом "_female" даёт женский голос.
 
 Значения — это instruct-строки для OmniVoice Voice Design режима.
 """
@@ -15,6 +15,8 @@ from typing import Optional
 # ============================================================
 # Ключ "xx"        → мужской голос для языка xx
 # Ключ "xx_female" → женский голос для языка xx
+# OmniVoice поддерживает 646 языков! Этот маппинг — только
+# для популярных. Для остальных просто передай код в language=.
 # ============================================================
 LANGUAGE_VOICE_MAP = {
     # Русский
@@ -82,8 +84,7 @@ def get_voice_for_language(
     """
     Возвращает instruct-голос для указанного языка.
 
-    Логика как в Dublaj: для языка "ru" вернёт "male",
-    для "ru" + female=True вернёт "female".
+    Для языка "ru" вернёт "male", для "ru" + female=True вернёт "female".
     Если язык не найден в маппинге — вернёт default_voice.
 
     Args:
@@ -119,10 +120,15 @@ def get_voice_for_language(
 
 def supported_languages() -> list:
     """
-    Возвращает список поддерживаемых языковых кодов (без _female).
+    Возвращает список кодов языков с настроенным маппингом голоса.
+
+    ВНИМАНИЕ: OmniVoice поддерживает 646 языков! Этот список содержит
+    только языки с настроенным маппингом (male/female). Для любого
+    другого языка передай код напрямую в language= — OmniVoice
+    сгенерирует речь с голосом по умолчанию.
 
     Returns:
-        Список кодов языков, например ["ru", "en", "tr", ...].
+        Список кодов языков с маппингом.
 
     Example:
         >>> langs = supported_languages()
@@ -130,3 +136,72 @@ def supported_languages() -> list:
         18
     """
     return sorted([k for k in LANGUAGE_VOICE_MAP if "_female" not in k])
+
+
+def all_languages() -> dict:
+    """
+    Возвращает СЛОВАРЬ ВСЕХ 646 языков, которые поддерживает OmniVoice.
+
+    Ключ — код языка ISO 639, значение — название на английском.
+
+    Returns:
+        Словарь {код: название}, например {"ru": "russian", "en": "english", ...}.
+
+    Example:
+        >>> langs = all_languages()
+        >>> print(len(langs))
+        646
+        >>> print(langs.get("ru"))
+        russian
+        >>> print(langs.get("sw"))
+        swahili
+    """
+    try:
+        from omnivoice.utils.lang_map import LANG_IDS, LANG_NAME_TO_ID
+
+        code_to_name = {v: k for k, v in LANG_NAME_TO_ID.items()}
+        return {code: code_to_name.get(code, code) for code in sorted(LANG_IDS)}
+    except ImportError:
+        return {}
+
+
+def list_languages(query: Optional[str] = None) -> None:
+    """
+    Печатает список всех языков OmniVoice с кодами и названиями.
+
+    Без аргументов — выводит все 646 языков.
+    С аргументом — фильтрует по коду или названию.
+
+    Args:
+        query: Фильтр (строка). Ищет совпадение в коде или названии.
+            Если None — выводит все языки.
+
+    Example:
+        >>> list_languages()            # все 646 языков
+        >>> list_languages("ru")        # языки с "ru" в коде
+        >>> list_languages("arabic")    # все арабские языки
+        >>> list_languages("kazakh")    # казахский
+    """
+    langs = all_languages()
+    if not langs:
+        print("OmniVoice не установлен. Установите: pip install omnivoice")
+        return
+
+    if query:
+        q = query.lower()
+        filtered = {
+            code: name
+            for code, name in langs.items()
+            if q in code.lower() or q in name.lower()
+        }
+        if not filtered:
+            print(f"Языки по запросу '{query}' не найдены.")
+            return
+        langs = filtered
+
+    print(f"{'КОД':6} {'НАЗВАНИЕ'}")
+    print("-" * 50)
+    for code, name in sorted(langs.items()):
+        print(f"{code:6} {name}")
+    print("-" * 50)
+    print(f"Найдено: {len(langs)} языков")

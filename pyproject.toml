@@ -33,9 +33,14 @@ dependencies = [
     "numpy",
     "librosa",
     "soundfile",
+    "scipy",
     "pyyaml",
     "einops",
     "munch",
+    "pydub",
+    "descript-audio-codec>=1.0.0",
+    "seed-vc>=0.4.3",
+    "omnivoice>=0.2.1",
 ]
 
 [project.urls]
