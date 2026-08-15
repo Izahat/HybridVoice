@@ -44,8 +44,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/hybridvoice/HybridVoice"
-Repository = "https://github.com/hybridvoice/HybridVoice"
+Homepage = "https://github.com/Izahat/HybridVoice"
+Repository = "https://github.com/Izahat/HybridVoice"
 
 [tool.hatch.build.targets.wheel]
 packages = ["hybridvoice"]

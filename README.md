@@ -8,6 +8,46 @@
 Пользователь работает с **одним объектом** и **одним методом** `.generate()`,
 даже не зная, что внутри работают две модели.
 
+## 🚀 Быстрый старт
+
+### Вариант 1 — pip (после публикации на PyPI):
+```bash
+pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+pip install hybridvoice
+```
+
+### Вариант 2 — прямо с GitHub:
+```bash
+pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+pip install git+https://github.com/Izahat/HybridVoice.git
+```
+
+### Вариант 3 — из исходников:
+```bash
+git clone https://github.com/Izahat/HybridVoice.git
+cd HybridVoice
+pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+pip install -r requirements.txt
+pip install -e .
+```
+
+```python
+from hybridvoice import HybridVoice
+
+model = HybridVoice()
+
+result = model.generate(
+    text="Привет!",
+    reference_audio="voice.wav",   # голос для клонирования
+    language="ru",
+)
+
+result.save("output.wav")
+```
+
+Веса моделей (~5.5 ГБ) скачаются автоматически при первом запуске.
+При следующих — мгновенно из кэша.
+
 ## Архитектура пайплайна
 
 ```
@@ -40,7 +80,7 @@ pip install hybridvoice
 
 ### Для разработчиков (из исходников):
 ```bash
-git clone https://github.com/hybridvoice/HybridVoice.git
+git clone https://github.com/Izahat/HybridVoice.git
 cd HybridVoice
 
 python -m venv venv
