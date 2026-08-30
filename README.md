@@ -32,6 +32,9 @@ pip install -e .
 ```
 
 ```python
+import logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+
 from hybridvoice import HybridVoice
 
 model = HybridVoice()
@@ -45,8 +48,41 @@ result = model.generate(
 result.save("output.wav")
 ```
 
+> ⚠️ Добавь `logging.basicConfig(...)` в начало скрипта, чтобы видеть
+> прогресс скачивания весов и статус генерации в терминале.
+
 Веса моделей (~5.5 ГБ) скачаются автоматически при первом запуске.
 При следующих — мгновенно из кэша.
+
+## ⚡ Производительность
+
+### Проблема: модели загружаются в GPU каждый запуск
+
+Веса кэшируются на диске (скачиваются один раз), но **загрузка в GPU-память**
+(~5.5 ГБ) происходит при каждом запуске скрипта. Это занимает 2-3 минуты.
+
+### Решение: загрузить модели один раз, потом вызывать многократно
+
+```python
+from hybridvoice import HybridVoice
+
+model = HybridVoice()
+model.load()  # загрузить один раз (~2-3 мин)
+
+# потом вызывай сколько хочешь — модели уже в памяти (~30 сек на вызов):
+result1 = model.generate("Hello!", reference_audio="voice1.wav", language="en")
+result1.save("output1.wav")
+
+result2 = model.generate("Привет!", reference_audio="voice2.wav", language="ru")
+result2.save("output2.wav")
+```
+
+### Скорость:
+| Сценарий | Время |
+|----------|-------|
+| Первый запуск (скачивание + загрузка) | ~5-7 мин |
+| Повторный запуск (загрузка из кэша) | ~2-3 мин |
+| Внутри сессии (модели уже в памяти) | ~30 сек на вызов |
 
 ## Архитектура пайплайна
 

@@ -14,12 +14,14 @@
 """
 
 import logging
+import math
 import time
 from typing import Optional
 
 from .audio import AudioResult
 from .config import HybridVoiceConfig
 from .tts import OmniVoiceTTS
+from .utils import validate_reference_audio
 from .vc import SeedVC
 
 logger = logging.getLogger(__name__)
@@ -206,6 +208,21 @@ class HybridVoice:
         """
         start_time = time.time()
 
+        if not isinstance(text, str):
+            raise TypeError("text должен быть строкой.")
+        if not text.strip():
+            raise ValueError("text не может быть пустым.")
+        if duration is not None:
+            if not isinstance(duration, (int, float)) or isinstance(duration, bool):
+                raise TypeError("duration должен быть числом.")
+            if not math.isfinite(duration) or duration <= 0:
+                raise ValueError("duration должен быть конечным числом больше 0.")
+        if speed is not None:
+            if not isinstance(speed, (int, float)) or isinstance(speed, bool):
+                raise TypeError("speed должен быть числом.")
+            if not math.isfinite(speed) or speed <= 0:
+                raise ValueError("speed должен быть конечным числом больше 0.")
+
         if self.tts is None and self.vc is None:
             raise ValueError(
                 "В конфигурации отключены и TTS, и Voice Conversion. "
@@ -213,6 +230,26 @@ class HybridVoice:
             )
 
         _language = language if language is not None else self.config.language
+
+        reference_will_be_used = (
+            self.vc is not None
+            and not skip_voice_conversion
+            and reference_audio is not None
+        )
+        if reference_will_be_used:
+            self.config.validate_vc_parameters(
+                diffusion_steps=diffusion_steps,
+                length_adjust=length_adjust,
+                inference_cfg_rate=inference_cfg_rate,
+            )
+            reference_audio = str(
+                validate_reference_audio(
+                    reference_audio,
+                    min_duration=self.config.min_reference_duration,
+                    max_duration=self.config.max_reference_duration,
+                    silence_threshold=self.config.silence_threshold,
+                )
+            )
 
         # ============================================================
         # ШАГ 1: TTS (OmniVoice, режим Voice Design)
@@ -269,6 +306,7 @@ class HybridVoice:
                     inference_cfg_rate=inference_cfg_rate,
                     auto_f0_adjust=auto_f0_adjust,
                     pitch_shift=pitch_shift,
+                    validate_reference=False,
                 )
                 current_sr = self.vc.sr
 

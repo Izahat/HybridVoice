@@ -15,8 +15,8 @@
 """
 
 import logging
-import os
-import sys
+import math
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Optional
 
@@ -24,7 +24,7 @@ import numpy as np
 import torch
 
 from .config import HybridVoiceConfig
-from .utils import get_best_device
+from .utils import resolve_device, validate_reference_audio
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,9 @@ class SeedVC:
             config: Конфигурация HybridVoice.
         """
         self.config = config
-        self.device = config.device or get_best_device()
+        self.device = resolve_device(config.device)
+        self.device_type = torch.device(self.device).type
+        self.compute_dtype = config.get_torch_dtype(self.device)
         self.is_loaded = False
 
         # Кэш весов: СТАНДАРТНЫЙ HF-кэш (как у transformers/diffusers).
@@ -220,7 +222,7 @@ class SeedVC:
 
         whisper_name = model_params.speech_tokenizer.name
         whisper_model = WhisperModel.from_pretrained(
-            whisper_name, torch_dtype=torch.float16
+            whisper_name, torch_dtype=self.compute_dtype
         ).to(self.device)
         del whisper_model.decoder
         whisper_feature_extractor = AutoFeatureExtractor.from_pretrained(whisper_name)
@@ -234,6 +236,7 @@ class SeedVC:
             """
             ori_inputs = whisper_feature_extractor(
                 [waves_16k.squeeze(0).cpu().numpy()],
+                sampling_rate=16000,
                 return_tensors="pt",
                 return_attention_mask=True,
             )
@@ -289,7 +292,7 @@ class SeedVC:
         )
         self.campplus_model = CAMPPlus(feat_dim=80, embedding_size=192)
         self.campplus_model.load_state_dict(
-            torch.load(campplus_ckpt_path, map_location="cpu")
+            torch.load(campplus_ckpt_path, map_location="cpu", weights_only=True)
         )
         self.campplus_model.eval()
         self.campplus_model.to(self.device)
@@ -352,7 +355,9 @@ class SeedVC:
         weights_file = hf_hub_download(
             repo_id=bigvgan_name, filename="bigvgan_generator.pt"
         )
-        checkpoint = torch.load(weights_file, map_location="cpu")
+        checkpoint = torch.load(
+            weights_file, map_location="cpu", weights_only=True
+        )
 
         try:
             model.load_state_dict(checkpoint["generator"])
@@ -378,6 +383,53 @@ class SeedVC:
         """
         factor = 2 ** (n_semitones / 12)
         return f0_sequence * factor
+
+    @classmethod
+    def _prepare_shifted_f0(
+        cls,
+        f0_reference: torch.Tensor,
+        f0_source: torch.Tensor,
+        auto_f0_adjust: bool,
+        pitch_shift: int,
+    ) -> torch.Tensor:
+        """Безопасно подготавливает F0 источника без медианы пустого тензора."""
+        voiced_reference = f0_reference[f0_reference > 1]
+        voiced_source = f0_source[f0_source > 1]
+
+        if voiced_reference.numel() == 0:
+            raise ValueError(
+                "RMVPE не обнаружил голосовые участки в reference-аудио. "
+                "Используйте чистую запись речи без длинной тишины или шума."
+            )
+
+        shifted_f0 = f0_source.clone()
+        if voiced_source.numel() == 0:
+            logger.warning(
+                "RMVPE не обнаружил F0 в исходном аудио; "
+                "автоподстройка высоты пропущена."
+            )
+            return shifted_f0
+
+        voiced_mask = f0_source > 1
+        if auto_f0_adjust:
+            median_reference = torch.median(torch.log(voiced_reference + 1e-5))
+            median_source = torch.median(torch.log(voiced_source + 1e-5))
+            shifted_log_source = (
+                torch.log(f0_source[voiced_mask] + 1e-5)
+                - median_source
+                + median_reference
+            )
+            shifted_f0[voiced_mask] = torch.exp(shifted_log_source)
+
+        if pitch_shift != 0:
+            shifted_f0[voiced_mask] = cls._adjust_f0_semitones(
+                shifted_f0[voiced_mask], pitch_shift
+            )
+
+        if not torch.isfinite(shifted_f0).all():
+            raise RuntimeError("Расчёт F0 дал NaN или бесконечные значения.")
+
+        return shifted_f0
 
     @staticmethod
     def _crossfade(chunk1, chunk2, overlap):
@@ -416,6 +468,7 @@ class SeedVC:
         inference_cfg_rate: Optional[float] = None,
         auto_f0_adjust: Optional[bool] = None,
         pitch_shift: Optional[int] = None,
+        validate_reference: bool = True,
     ) -> np.ndarray:
         """
         Преобразует голос: контент из source → тембр из target.
@@ -433,6 +486,8 @@ class SeedVC:
             inference_cfg_rate: Сходство с референсом (по умолчанию 0.8).
             auto_f0_adjust: Автоподстройка F0 (по умолчанию True).
             pitch_shift: Сдвиг тона в полутонах (по умолчанию 0).
+            validate_reference: Проверять reference-аудио перед загрузкой
+                моделей. Отключается главным пайплайном после ранней проверки.
 
         Returns:
             Numpy-массив с конвертированным аудио (sample_rate = self.sr = 44100).
@@ -440,17 +495,47 @@ class SeedVC:
         Example:
             >>> result = vc.convert(tts_audio, target="voice.wav", source_sr=24000)
         """
-        if not self.is_loaded:
-            self.load()
-
         import torchaudio
         import librosa
 
-        _steps = diffusion_steps if diffusion_steps is not None else self.config.diffusion_steps
-        _length_adjust = length_adjust if length_adjust is not None else self.config.length_adjust
-        _cfg_rate = inference_cfg_rate if inference_cfg_rate is not None else self.config.inference_cfg_rate
+        _steps, _length_adjust, _cfg_rate = self.config.validate_vc_parameters(
+            diffusion_steps=diffusion_steps,
+            length_adjust=length_adjust,
+            inference_cfg_rate=inference_cfg_rate,
+        )
         _auto_f0 = auto_f0_adjust if auto_f0_adjust is not None else self.config.auto_f0_adjust
         _pitch_shift = pitch_shift if pitch_shift is not None else self.config.pitch_shift
+
+        if not isinstance(_auto_f0, bool):
+            raise TypeError("auto_f0_adjust должен быть bool.")
+        if not isinstance(_pitch_shift, int) or isinstance(_pitch_shift, bool):
+            raise TypeError("pitch_shift должен быть целым числом.")
+        if not isinstance(validate_reference, bool):
+            raise TypeError("validate_reference должен быть bool.")
+
+        source = np.asarray(source, dtype=np.float32).squeeze()
+        if source.ndim != 1 or source.size == 0:
+            raise ValueError("source должен быть непустым одномерным waveform.")
+        if not np.isfinite(source).all():
+            raise ValueError("source содержит NaN или бесконечные значения.")
+        if source_sr is not None:
+            if not isinstance(source_sr, (int, float)) or isinstance(source_sr, bool):
+                raise TypeError("source_sr должен быть числом.")
+            if not math.isfinite(source_sr) or source_sr <= 0:
+                raise ValueError("source_sr должен быть конечным числом больше 0.")
+
+        if validate_reference:
+            target = str(
+                validate_reference_audio(
+                    target,
+                    min_duration=self.config.min_reference_duration,
+                    max_duration=self.config.max_reference_duration,
+                    silence_threshold=self.config.silence_threshold,
+                )
+            )
+
+        if not self.is_loaded:
+            self.load()
 
         # --- Загружаем target аудио ---
         ref_audio, _ = librosa.load(target, sr=self.sr, mono=True)
@@ -506,25 +591,12 @@ class SeedVC:
         F0_ori = torch.from_numpy(F0_ori).to(self.device)[None]
         F0_alt = torch.from_numpy(F0_alt).to(self.device)[None]
 
-        voiced_F0_ori = F0_ori[F0_ori > 1]
-        voiced_F0_alt = F0_alt[F0_alt > 1]
-
-        log_f0_alt = torch.log(F0_alt + 1e-5)
-        voiced_log_f0_ori = torch.log(voiced_F0_ori + 1e-5)
-        voiced_log_f0_alt = torch.log(voiced_F0_alt + 1e-5)
-        median_log_f0_ori = torch.median(voiced_log_f0_ori)
-        median_log_f0_alt = torch.median(voiced_log_f0_alt)
-
-        shifted_log_f0_alt = log_f0_alt.clone()
-        if _auto_f0:
-            shifted_log_f0_alt[F0_alt > 1] = (
-                log_f0_alt[F0_alt > 1] - median_log_f0_alt + median_log_f0_ori
-            )
-        shifted_f0_alt = torch.exp(shifted_log_f0_alt)
-        if _pitch_shift != 0:
-            shifted_f0_alt[F0_alt > 1] = self._adjust_f0_semitones(
-                shifted_f0_alt[F0_alt > 1], _pitch_shift
-            )
+        shifted_f0_alt = self._prepare_shifted_f0(
+            f0_reference=F0_ori,
+            f0_source=F0_alt,
+            auto_f0_adjust=_auto_f0,
+            pitch_shift=_pitch_shift,
+        )
 
         # --- Length regulation ---
         cond, _, _, _, _ = self.model.length_regulator(
@@ -546,9 +618,13 @@ class SeedVC:
             is_last_chunk = processed_frames + max_source_window >= cond.size(1)
             cat_condition = torch.cat([prompt_condition, chunk_cond], dim=1)
 
-            with torch.autocast(
-                device_type=self.device, dtype=torch.float16
-            ):
+            autocast_context = (
+                torch.autocast(device_type="cuda", dtype=self.compute_dtype)
+                if self.device_type == "cuda"
+                and self.compute_dtype in {torch.float16, torch.bfloat16}
+                else nullcontext()
+            )
+            with autocast_context:
                 vc_target = self.model.cfm.inference(
                     cat_condition,
                     torch.LongTensor([cat_condition.size(1)]).to(mel2.device),
@@ -592,6 +668,8 @@ class SeedVC:
                 processed_frames += vc_target.size(2) - overlap_frame_len
 
         result = np.concatenate(generated_wave_chunks)
+        if not np.isfinite(result).all():
+            raise RuntimeError("SeedVC сгенерировала аудио с NaN или infinity.")
         logger.info(f"Voice Conversion завершена. Длина: {len(result)} сэмплов.")
         return result
 

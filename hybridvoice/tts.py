@@ -19,7 +19,7 @@ from typing import List, Optional, Union
 import numpy as np
 
 from .config import HybridVoiceConfig
-from .utils import get_best_device
+from .utils import resolve_device
 from .voices import get_voice_for_language
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,7 @@ class OmniVoiceTTS:
             config: Конфигурация HybridVoice с параметрами TTS.
         """
         self.config = config
-        self.device = config.device or get_best_device()
+        self.device = resolve_device(config.device)
         self.model = None
         self._is_loaded = False
 
@@ -111,7 +111,7 @@ class OmniVoiceTTS:
                 "Установите его: pip install -e ./OmniVoice"
             ) from e
 
-        dtype = self.config.get_torch_dtype()
+        dtype = self.config.get_torch_dtype(self.device)
 
         self.model = OmniVoice.from_pretrained(
             self.config.tts_model,
